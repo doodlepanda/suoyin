@@ -1,0 +1,29 @@
+.DS_Store
+assets/fiona-retro-film-icon.png
+
+# Local SDKs, caches, and build intermediates
+build/**
+!build/
+!build/releases/
+!build/releases/**/
+!build/releases/**/*.zip
+!build/releases/**/*.dmg
+!build/releases/**/*.txt
+build/releases/v4.0.0/
+build/releases/v4.0.1/
+
+windows-native/bin/
+windows-native/obj/
+windows-native/build/
+
+# Large generated executables are distributed inside release zip files
+*.exe
+*.pdb
+*.app/
+*.dmg
+*.zip
+
+# Keep release artifacts versioned
+!build/releases/**/*.zip
+!build/releases/**/*.dmg
+!build/releases/**/*.txt
