@@ -2,6 +2,7 @@ using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Drawing.Imaging;
 using System.Reflection;
+using System.Runtime.InteropServices;
 using System.Windows.Forms;
 
 namespace PhotoLayoutTool.Windows;
@@ -477,21 +478,43 @@ internal sealed class LayoutForm : Form
             _numberBox.Text = batch.FolderNumber;
         }
 
-        var failed = 0;
-        foreach (var path in batch.Paths)
-        {
-            try
+        var loadedPhotos = new PhotoItem?[batch.Paths.Count];
+        Parallel.For(
+            0,
+            batch.Paths.Count,
+            new ParallelOptions { MaxDegreeOfParallelism = Math.Max(1, Environment.ProcessorCount) },
+            index =>
             {
-                using var source = Image.FromFile(path);
-                _photos.Add(new PhotoItem(path, CreatePreviewImage(source)));
-                if (_selectedPhotoIndex < 0)
+                var path = batch.Paths[index];
+                try
                 {
-                    _selectedPhotoIndex = _photos.Count - 1;
+                    var preview = TryGetWindowsThumbnail(path, 1024, 1024);
+                    if (preview is null)
+                    {
+                        using var source = Image.FromFile(path);
+                        preview = CreatePreviewImage(source);
+                    }
+                    loadedPhotos[index] = new PhotoItem(path, preview);
                 }
-            }
-            catch
+                catch
+                {
+                    loadedPhotos[index] = null;
+                }
+            });
+
+        var failed = 0;
+        foreach (var photo in loadedPhotos)
+        {
+            if (photo is null)
             {
                 failed++;
+                continue;
+            }
+
+            _photos.Add(photo);
+            if (_selectedPhotoIndex < 0)
+            {
+                _selectedPhotoIndex = _photos.Count - 1;
             }
         }
         if (failed > 0)
@@ -677,12 +700,12 @@ internal sealed class LayoutForm : Form
         const float left = 50;
         const float top = 40f;
         const float areaW = 1700;
-        const float areaH = 1000;
+        const float areaH = 1120;
         var gap = (float)GetGap();
         var maxCellW = (areaW - gap * (grid.Cols - 1)) / grid.Cols;
         var maxCellH = (areaH - gap * (grid.Rows - 1)) / grid.Rows;
-        var cellW = Math.Min(maxCellW, maxCellH * 1.5f);
-        var cellH = cellW / 1.5f;
+        var cellW = maxCellW;
+        var cellH = maxCellH;
         var contentW = cellW * grid.Cols + gap * (grid.Cols - 1);
         var gridLeft = left + (areaW - contentW) / 2f;
 
@@ -704,7 +727,7 @@ internal sealed class LayoutForm : Form
             }
         }
 
-        DrawStudioLogoAndNumber(graphics, scaleX, scaleY, grid, visibleCount, gridLeft, top, cellW, cellH, gap);
+        DrawStudioLogoAndNumber(graphics, scaleX, scaleY);
         return bitmap;
     }
 
@@ -714,7 +737,7 @@ internal sealed class LayoutForm : Form
         const int maxCols = 7;
         const int maxRows = 6;
         const double areaW = 1700;
-        const double areaH = 900;
+        const double areaH = 1120;
         GridSize best = new(7, 6);
         var bestScore = double.NegativeInfinity;
 
@@ -762,21 +785,7 @@ internal sealed class LayoutForm : Form
 
     private static void DrawPhoto(Graphics graphics, PhotoItem photo, RectangleF box, float scaleX, float scaleY, bool usePreviewImage)
     {
-        if (usePreviewImage)
-        {
-            DrawRotatedImageContained(graphics, photo.PreviewImage, photo.Rotation, box, scaleX, scaleY);
-            return;
-        }
-
-        try
-        {
-            using var image = Image.FromFile(photo.Path);
-            DrawRotatedImageContained(graphics, image, photo.Rotation, box, scaleX, scaleY);
-        }
-        catch
-        {
-            DrawRotatedImageContained(graphics, photo.PreviewImage, photo.Rotation, box, scaleX, scaleY);
-        }
+        DrawRotatedImageContained(graphics, photo.PreviewImage, photo.Rotation, box, scaleX, scaleY);
     }
 
     private static void DrawRotatedImageContained(Graphics graphics, Image image, int rotation, RectangleF box, float scaleX, float scaleY)
@@ -846,66 +855,100 @@ internal sealed class LayoutForm : Form
         return bitmap;
     }
 
-    private void DrawStudioLogo(Graphics graphics, float scaleX, float scaleY)
+    private static Bitmap? TryGetWindowsThumbnail(string path, int width, int height)
     {
-        if (_studioLogo is null) return;
-        var logoW = 310f * scaleX;
-        var logoH = logoW * _studioLogo.Height / _studioLogo.Width;
-        var x = 1460f * scaleX;
-        var y = 980f * scaleY;
-        graphics.DrawImage(_studioLogo, x, y, logoW, logoH);
+        IShellItemImageFactory? factory = null;
+        IntPtr hBitmap = IntPtr.Zero;
+        try
+        {
+            var iid = typeof(IShellItemImageFactory).GUID;
+            SHCreateItemFromParsingName(path, IntPtr.Zero, ref iid, out factory);
+            factory.GetImage(
+                new NativeSize(width, height),
+                ShellItemImageFactoryFlags.ThumbnailOnly | ShellItemImageFactoryFlags.BiggerSizeOk,
+                out hBitmap);
+            if (hBitmap == IntPtr.Zero) return null;
+            using var shellBitmap = Image.FromHbitmap(hBitmap);
+            return new Bitmap(shellBitmap);
+        }
+        catch
+        {
+            return null;
+        }
+        finally
+        {
+            if (hBitmap != IntPtr.Zero) DeleteObject(hBitmap);
+            if (factory is not null && Marshal.IsComObject(factory)) Marshal.FinalReleaseComObject(factory);
+        }
     }
 
-    private void DrawStudioLogoAndNumber(
-        Graphics graphics,
-        float scaleX,
-        float scaleY,
-        GridSize grid,
-        int visibleCount,
-        float gridLeft,
-        float top,
-        float cellW,
-        float cellH,
-        float gap)
+    private void DrawStudioLogo(Graphics graphics, float scaleX, float scaleY)
+    {
+        DrawStudioLogoAndNumber(graphics, scaleX, scaleY);
+    }
+
+    private void DrawStudioLogoAndNumber(Graphics graphics, float scaleX, float scaleY)
     {
         if (_studioLogo is null) return;
-
-        var lastRow = Math.Max(0, (visibleCount - 1) / grid.Cols);
-        var itemsInLastRow = visibleCount == 0 ? 0 : visibleCount - lastRow * grid.Cols;
-        var freeColumns = grid.Cols - itemsInLastRow;
-        var logoW = 310f;
-        float logoX;
-        float logoY;
-
-        if (freeColumns >= 2)
-        {
-            var freeAreaX = gridLeft + itemsInLastRow * (cellW + gap);
-            var freeAreaW = freeColumns * cellW + Math.Max(0, freeColumns - 1) * gap;
-            logoW = Math.Min(logoW, Math.Max(120f, freeAreaW - 20f));
-            logoX = freeAreaX + (freeAreaW - logoW) / 2f;
-            logoY = top + lastRow * (cellH + gap);
-        }
-        else
-        {
-            logoW = 260f;
-            logoX = 1490f;
-            logoY = 930f;
-        }
-
+        const float right = 50f;
+        const float bottom = 40f;
+        const float logoW = 195f;
+        const float numberH = 34f;
         var logoH = logoW * _studioLogo.Height / _studioLogo.Width;
+        var logoX = CanvasW - right - logoW;
+        var logoY = CanvasH - bottom - numberH - 6f - logoH;
         graphics.DrawImage(_studioLogo, logoX * scaleX, logoY * scaleY, logoW * scaleX, logoH * scaleY);
 
         var number = _numberBox.Text.Trim();
         if (number.Length == 0) return;
         using var brush = new SolidBrush(Color.FromArgb(40, 48, 58));
-        using var font = new Font("Arial", 30 * scaleY, FontStyle.Bold);
-        using var format = new StringFormat { Alignment = StringAlignment.Center };
+        using var font = new Font("Arial", 24 * scaleY, FontStyle.Bold);
+        using var format = new StringFormat { Alignment = StringAlignment.Far };
         var numberBox = new RectangleF(
             logoX * scaleX,
-            (logoY + logoH + 8f) * scaleY,
+            (logoY + logoH + 6f) * scaleY,
             logoW * scaleX,
-            44f * scaleY);
+            numberH * scaleY);
         graphics.DrawString($"No.{number}", font, brush, numberBox, format);
+    }
+
+    [DllImport("shell32.dll", CharSet = CharSet.Unicode, PreserveSig = false)]
+    private static extern void SHCreateItemFromParsingName(
+        string path,
+        IntPtr bindContext,
+        ref Guid riid,
+        [MarshalAs(UnmanagedType.Interface)] out IShellItemImageFactory imageFactory);
+
+    [DllImport("gdi32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool DeleteObject(IntPtr objectHandle);
+
+    [ComImport]
+    [Guid("BCC18B79-BA16-442F-80C4-8A59C30C463B")]
+    [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    private interface IShellItemImageFactory
+    {
+        void GetImage(NativeSize size, ShellItemImageFactoryFlags flags, out IntPtr hBitmap);
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private readonly struct NativeSize
+    {
+        public NativeSize(int width, int height)
+        {
+            Width = width;
+            Height = height;
+        }
+
+        public int Width { get; }
+        public int Height { get; }
+    }
+
+    [Flags]
+    private enum ShellItemImageFactoryFlags
+    {
+        BiggerSizeOk = 0x1,
+        ThumbnailOnly = 0x8,
     }
 
     private static void DrawEmptyMessage(Graphics graphics, int width, int height)

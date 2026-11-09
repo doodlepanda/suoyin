@@ -1,4 +1,5 @@
 .DS_Store
+artifacts/
 assets/fiona-retro-film-icon.png
 
 # Local SDKs, caches, and build intermediates

@@ -9,7 +9,7 @@
     <ApplicationIcon>app-icon.ico</ApplicationIcon>
     <AssemblyName>fiona索引制作工具</AssemblyName>
     <RootNamespace>PhotoLayoutTool.Windows</RootNamespace>
-    <Version>4.0.2</Version>
+    <Version>4.0.6</Version>
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
     <SelfContained>true</SelfContained>
     <PublishSingleFile>true</PublishSingleFile>

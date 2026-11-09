@@ -25,6 +25,8 @@
 
 ## 最新发布
 
-见 `build/releases/v4.0.2/`。
+已有正式发布包见 `build/releases/v4.0.2/`；Windows 当前源码版本为 **v4.0.6**。
+
+Windows 继续开发、构建方法及待验证事项见 [开发交接文档](docs/HANDOFF.md)。
 
 Windows 读取 iPhone HEIC / HEIF / HIF 静态照片需要安装 Microsoft 官方 HEIF 图像扩展，Windows 发布包中包含安装辅助脚本。
